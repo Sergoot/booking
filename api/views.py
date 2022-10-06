@@ -2,10 +2,10 @@ from rest_framework import viewsets
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.decorators import action
-from rest_framework.permissions import AllowAny, IsAuthenticated, IsAdminUser
-from .serializers import VisitSerializer, ClientSerializer
+from rest_framework.permissions import AllowAny, IsAdminUser
+from .serializers import VisitSerializer, ClientSerializer, ClientDetailSerializer
 from .models import Visit, Client
-from .services import get_all_or_filter, get_or_create, get_end_time, generate_password
+from .services import get_all_or_filter, get_or_create, get_end_time, generate_password, send_websocket_notice
 from .permissions import IsOwnerOrAdminUser
 from django.db.models import QuerySet
 from .tasks import send_email
@@ -15,6 +15,11 @@ from datetime import datetime
 class VisitViewSet(viewsets.ModelViewSet):
     """ ViewSet Приёма """
     serializer_class = VisitSerializer
+
+    def get_permissions(self):
+        if self.action == 'create' or self.action == 'get_busy_time':
+            return [AllowAny(), ]
+        return [IsOwnerOrAdminUser(), ]
 
     def get_queryset(self) -> QuerySet:
         if self.action == 'list':
@@ -28,7 +33,7 @@ class VisitViewSet(viewsets.ModelViewSet):
         data = self.request.data
         time_start = data.get('time_start')
         date = data.get('date')
-        email = data.get('email', None)
+        email = data.get('email')
         if not list(get_all_or_filter(Visit, time_start=time_start, date=date)):
             client, is_created = get_or_create(Client, email=email)
             duration = data.get('duration', 60)
@@ -43,6 +48,7 @@ class VisitViewSet(viewsets.ModelViewSet):
             time_end = get_end_time(time_start, duration)
             serializer.is_valid(raise_exception=True)
             vizit_data = {**serializer.validated_data, 'time_end': time_end, 'client': client}
+
             serializer.save(**vizit_data)
         else:
             return {'error_message': 'Запись на данное время недоступна'}
@@ -71,7 +77,7 @@ class VisitViewSet(viewsets.ModelViewSet):
     def client_visits(self, request, pk=None) -> Response:
         """ Список всех записей клиента """
         visited = self.request.query_params.get('visited')
-        queryset = get_all_or_filter(Visit, client=pk)
+        queryset = get_all_or_filter(Visit, client=pk).order_by('is_visited', 'date', 'time_start')
         if visited:
             queryset = queryset.filter(is_visited=True)
         serializer = self.get_serializer(queryset, many=True)
@@ -80,7 +86,7 @@ class VisitViewSet(viewsets.ModelViewSet):
 
 class ClientViewSet(viewsets.ModelViewSet):
     """ ViewSet Клиента """
-    serializer_class = ClientSerializer
+    serializer_class = ClientDetailSerializer
     queryset = get_all_or_filter(Client, is_staff=False)
     # permission_classes = (IsAdminUser, )
 
@@ -97,3 +103,11 @@ class ClientViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(serializer.data)
+
+    @action(detail=False, methods=['post'],)
+    def password(self, request):
+        req_pass = request.data.get('password')
+        print(req_pass)
+        password = request.user.password
+        print(req_pass == password)
+        return Response({'password': password})

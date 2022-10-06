@@ -1,14 +1,20 @@
 import random
 from ast import literal_eval
 from datetime import datetime, date, timedelta, time
+from time import strftime
 
 from django.core.mail import send_mail
 from django.db.models.base import Model
 from django.db.models import QuerySet
 from typing import Any
+from channels.layers import get_channel_layer
+from asgiref.sync import async_to_sync
+from django.contrib.auth import get_user_model
 
 from booking import settings
 from .models import Visit
+
+User = get_user_model()
 
 
 def get_all_or_filter(model: Model, **filters: Any) -> QuerySet:
@@ -63,3 +69,21 @@ def mail(email: str, password: str = None, **kwargs: any) -> None:
                   f'{date_} в {time_start}, не забудьте)'
     email_from = settings.EMAIL_HOST_USER
     send_mail(subject, message, email_from, [email], fail_silently=False)
+
+
+def send_websocket_notice(visit_data: dict) -> None:
+    """ Отправляет уведомление админам по вебсокету """
+    visit_data['date'] = visit_data['date'].strftime("%m.%d")
+    visit_data['time_start'] = visit_data['time_start'].strftime("%H:%M")
+    visit_data['client'] = visit_data['client'].email
+    channel_layer = get_channel_layer()
+    admins = get_all_or_filter(User, is_staff=True)
+    for admin in admins:
+        async_to_sync(channel_layer.group_send)(
+            "admin_"+str(admin.id),  # Channel Name, Should always be string
+            {
+                "type": "admin_notice",  # Custom Function written in the consumers.py
+                "data": visit_data,
+            },
+        )
+

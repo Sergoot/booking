@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from .models import Visit, Client
 from .tasks import send_email
-from .services import generate_password
+from .services import generate_password, send_websocket_notice
 from django.contrib.auth import get_user_model
 User = get_user_model()
 
@@ -9,7 +9,7 @@ User = get_user_model()
 class ClientSerializer(serializers.ModelSerializer):
     class Meta:
         model = Client
-        fields = ('id', 'email', 'name', 'phone')
+        fields = ('id', 'email', 'name', 'phone',)
 
     def update(self, instance, validated_data):
         instance.email = validated_data.get('email', instance.email)
@@ -37,5 +37,14 @@ class VisitSerializer(serializers.ModelSerializer):
         date = validated_data.get('date').strftime('%x')
         time_start = validated_data.get('time_start').strftime('%H:%M')
         instance = Visit.objects.create(**validated_data)
+        send_websocket_notice(validated_data)
         send_email.delay(email, date=date, time_start=time_start)
         return instance
+
+
+class ClientDetailSerializer(serializers.ModelSerializer):
+    visits = VisitSerializer(many=True,)
+
+    class Meta:
+        model = Client
+        fields = ('id', 'email', 'name', 'phone', 'visits')
